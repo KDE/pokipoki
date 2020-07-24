@@ -6,9 +6,8 @@ int main(int argc, char *argv[])
     auto app = new QCoreApplication(argc, argv);
     app->setApplicationName("fimbeb-example");
 
-    auto note = Note{};
-    note.id = "pink";
-    note.text = "yeet";
+    auto note = new Note;
+    note->text = "yeet";
 
     FBDatabase::instance()->save(note);
 

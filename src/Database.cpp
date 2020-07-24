@@ -18,6 +18,12 @@ FBDatabase::FBDatabase(QObject *parent) : QObject(parent)
     Q_ASSERT(d_ptr->db.open());
 }
 
+void FBDatabase::save(FBObject* object)
+{
+    d_ptr->initializeForObject(object);
+    d_ptr->insert(object);
+}
+
 FBDatabase* FBDatabase::instance()
 {
     static QMutex mutex;
