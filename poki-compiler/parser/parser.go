@@ -40,7 +40,7 @@ func (s *customScanner) ScanName() string {
 func (s *customScanner) ScanExpecting(str string) string {
 	s.ScanNoEOF()
 	if s.TokenText() != str {
-		log.Fatalf("%s: Was expecting '%s', got '%s'", str, s.TokenText())
+		log.Fatalf("%s: Was expecting '%s', got '%s'", s.Position, str, s.TokenText())
 	}
 	return s.TokenText()
 }

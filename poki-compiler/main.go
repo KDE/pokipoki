@@ -2,13 +2,15 @@ package main
 
 import (
 	"flag"
+	"io/ioutil"
 	"log"
+	"os"
 	"pokic/parser"
 )
 
 func main() {
 	input := flag.String("input", "", "The input file to process with pokic")
-	_ = flag.String("output-basename", "", "The basename of the output files")
+	output := flag.String("output", "", "The output file to write to")
 
 	flag.Parse()
 
@@ -17,5 +19,8 @@ func main() {
 		log.Fatal(err)
 	}
 
-	println(doku.Output())
+	err = ioutil.WriteFile(*output, []byte(doku.Output()), os.ModePerm)
+	if err != nil {
+		log.Fatal(err)
+	}
 }

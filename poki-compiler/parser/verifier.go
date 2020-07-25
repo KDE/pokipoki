@@ -6,6 +6,19 @@ import (
 	"text/template"
 )
 
+var sqlKind = map[string]string{
+	"String":   "TEXT",
+	"Date":     "DATE",
+	"DateTime": "DATETIME",
+}
+
+func SqlType(typeDef []string) string {
+	if val, ok := sqlKind[typeDef[0]]; ok {
+		return val
+	}
+	return "BLOB"
+}
+
 var imports = map[string]string{
 	"QBitArray":          "QBitArray",
 	"QBrush":             "QBrush",
@@ -273,14 +286,21 @@ func (d PokiPokiDocument) ParentedBy(typ string) []string {
 
 var tmpl = template.Must(template.New("").Funcs(template.FuncMap{
 	"StringJoin": strings.Join,
+	"TypeDef":    SqlType,
 }).Parse(`
 {{ $root := . }}
-#include <QObject>
-#include <QUuid>
-#include <QSqlQuery>
-#include <QSqlError>
-#include <QVariant>
+#pragma once
+
 #include <QDebug>
+#include <QMutex>
+#include <QMutexLocker>
+#include <QObject>
+#include <QPointer>
+#include <QSharedPointer>
+#include <QSqlError>
+#include <QSqlQuery>
+#include <QUuid>
+#include <QVariant>
 {{ StringJoin $root.LocateImports "\n" }}
 
 #include "Database.h"
@@ -293,9 +313,22 @@ class {{ .Name }} : public QObject {
 		static bool db_initialized = false;
 		if (!db_initialized) {
 			volatile auto db = PPDatabase::instance();
+			Q_UNUSED(db)
 			prepareDatabase();
 			db_initialized = true;
 		}
+	}
+
+	static QSharedPointer<{{ .Name }}> withID(QUuid ID) {
+		static QMap<QUuid,QPointer<{{.Name}}>> s_instances;
+		static QMutex s_mutex;
+
+		QMutexLocker locker(&s_mutex);
+		auto val = s_instances.value(ID, nullptr);
+		if (val.isNull()) {
+			s_instances[ID] = new {{.Name}}(ID);
+		}
+		return QSharedPointer<{{ .Name }}>(s_instances[ID].data(), &QObject::deleteLater);
 	}
 
 	{{ range $parent := $root.ParentedBy .Name }}
@@ -311,7 +344,7 @@ class {{ .Name }} : public QObject {
 	{{ range $prop := .Properties }}
 	{{ $propType := $root.AlwaysType $prop.Type }}
 	{{ $propTypeName := StringJoin $propType "" }}
-	Q_PROPERTY({{ $propTypeName }} {{ $prop.Name }} READ {{ $prop.Name }} WRITE set_{{ $prop.Name }})
+	Q_PROPERTY({{ $propTypeName }} {{ $prop.Name }} READ {{ $prop.Name }} WRITE set_{{ $prop.Name }} NOTIFY {{$prop.Name}}Changed)
 	{{ $propTypeName }} m_{{$prop.Name}};
 	{{ $propTypeName }} m_{{$prop.Name}}_prev;
 	bool m_{{$prop.Name}}_dirty;
@@ -351,7 +384,7 @@ public:
 		{{ end }}
 	}
 
-	void commit() {
+	void save() {
 		if (m_NEW) {
 			auto tq = QStringLiteral(R"RJIENRLWEY(
 INSERT INTO {{ $item.Name }}
@@ -395,7 +428,7 @@ VALUES
 	}
 
 	{{ range $child := .Children }}
-	QList<{{ $child }}*> child{{ $child }}s() {
+	QList<QSharedPointer<{{ $child }}>> child{{ $child }}s() {
 		auto tq = QStringLiteral("SELECT * FROM {{ $child }} WHERE PARENT_{{ $item.Name }}_ID = :parent_id");
 		QSqlQuery query;
 		query.prepare(tq);
@@ -404,10 +437,10 @@ VALUES
 		if (!ok) {
 			qCritical() << query.lastError() << "when loading an {{ $child }} children of a {{ $item.Name }}";
 		}
-		QList<{{ $child }}*> ret;
+		QList<QSharedPointer<{{ $child }}>> ret;
 		{{ $childKind := index $root.Objects $child }}
 		while (query.next()) {
-			auto add = new {{ $child }}(query.value("ID").value<QUuid>());
+			auto add = {{ $child }}::withID(query.value("ID").value<QUuid>());
 		{{ range $prop := $childKind.Properties }}
 			add->setProperty("{{ $prop.Name }}", query.value("{{ $prop.Name }}"));
 		{{ end }}
@@ -415,7 +448,7 @@ VALUES
 		}
 		return ret;
 	}
-	void addChild{{ $child }}({{ $child }}* child) {
+	void addChild{{ $child }}(QSharedPointer<{{ $child }}> child) {
 		auto tq = QStringLiteral("UPDATE {{ $child }} SET PARENT_{{ $item.Name }}_ID = :new_parent_id WHERE ID = :child_id ");
 		QSqlQuery query;
 		query.prepare(tq);
@@ -427,7 +460,7 @@ VALUES
 		}
 		child->m_parent_{{ $item.Name }}_ID = m_ID;
 	}
-	void removeChild{{ $child }}({{ $child }}* child) {
+	void removeChild{{ $child }}(QSharedPointer<{{ $child }}> child) {
 		auto tq = QStringLiteral("UPDATE {{ $child }} SET PARENT_{{ $item.Name }}_ID = NULL WHERE ID = :child_id ");
 		QSqlQuery query;
 		query.prepare(tq);
@@ -440,13 +473,13 @@ VALUES
 	}
 	{{ end }}
 
-	static {{ .Name }}* new{{ .Name }}() {
-		auto ret = new {{.Name}}(QUuid::createUuid());
+	static QSharedPointer<{{ .Name }}> new{{ .Name }}() {
+		auto ret = {{.Name}}::withID(QUuid::createUuid());
 		ret->m_NEW = true;
 		return ret;
 	}
 
-	static {{ .Name }}* load(const QUuid& ID) {
+	static QSharedPointer<{{ .Name }}> load(const QUuid& ID) {
 		auto tq = QStringLiteral("SELECT * FROM {{ $item.Name }} WHERE ID = :id");
 		QSqlQuery query;
 		query.prepare(tq);
@@ -455,11 +488,31 @@ VALUES
 		if (!ok) {
 			qCritical() << query.lastError() << "when loading an item of type {{ $item.Name }}";
 		}
-		auto ret = new {{.Name}}(ID);
+		auto ret = {{.Name}}::withID(ID);
 		while (query.next()) {
 			{{ range $prop := .Properties -}}
 			ret->setProperty("{{ $prop.Name }}", query.value("{{ $prop.Name }}"));
 			{{ end }}
+		}
+		return ret;
+	}
+
+	static QList<QSharedPointer<{{ .Name }}>> where(PredicateList predicates) {
+		auto tq = QStringLiteral("SELECT * FROM {{ $item.Name }} WHERE %1").arg(predicates.allPredicatesToWhere().join(","));
+		QSqlQuery query;
+		query.prepare(tq);
+		predicates.bindAllPredicates(&query);
+		auto ok = query.exec();
+		if (!ok) {
+			qCritical() << query.lastError() << "when running a where query on items of type {{ $item.Name }}";
+		}
+		QList<QSharedPointer<{{ .Name }}>> ret;
+		while (query.next()) {
+			auto add = {{ .Name }}::withID(query.value("ID").value<QUuid>());
+			{{ range $prop := .Properties }}
+			add->setProperty("{{ $prop.Name }}", query.value("{{ $prop.Name }}"));
+			{{ end }}
+			ret << add;
 		}
 		return ret;
 	}
@@ -472,7 +525,7 @@ VALUES
 			PARENT_{{ $parent }}_ID BLOB,
 			{{ end }}
 			{{ range $prop := .Properties -}}
-			{{ $prop.Name }} BLOB NOT NULL,
+			{{ $prop.Name }} {{ TypeDef $prop.Type }} NOT NULL,
 			{{ end -}}
 			PRIMARY KEY (ID))
 		)RJIENRLWEY");
@@ -485,6 +538,7 @@ VALUES
 	}
 
 };
+
 {{ end -}}
 `))
 

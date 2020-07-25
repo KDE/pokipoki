@@ -8,13 +8,15 @@ int main(int argc, char *argv[])
 
     auto note = Note::newNote();
     note->set_title("yeet");
-    note->commit();
+    note->save();
 
     auto child = Note::newNote();
     child->set_title("ohno");
-    child->commit();
+    child->save();
 
     note->addChildNote(child);
+
+    auto data = Note::where({ like(title, QStringLiteral("%ye%")) });
 
     return 0;
 }
