@@ -1,17 +1,13 @@
 #include <QObject>
 #include <QUuid>
-#include <QMap>
-#include <QString>
 #include <QSqlQuery>
 #include <QSqlError>
 #include <QVariant>
-#include <QSqlDriver>
-#include <QByteArray>
-#include <QIODevice>
-#include <QDataStream>
+#include <QDebug>
+#include <QString>
+#include <QMap>
 
 #include "Database.h"
-
 class Note : public QObject {
         Q_OBJECT
 
@@ -23,6 +19,11 @@ class Note : public QObject {
                         db_initialized = true;
                 }
         }
+
+
+        QUuid m_parent_Note_ID;
+
+
 
         QUuid m_ID;
         bool m_NEW = false;
@@ -109,24 +110,18 @@ public:
                         auto tq = QStringLiteral(R"RJIENRLWEY(
 INSERT INTO Note
 (ID,title,metadata)
-VALUES( ? ,   ?  , ? );
+VALUES
+(:ID,   :title  , :metadata );
                         )RJIENRLWEY");
                         QSqlQuery query;
-                        Q_ASSERT(query.driver()->hasFeature(QSqlDriver::NamedPlaceholders));
                         query.prepare(tq);
-                        auto ba = QByteArray{};
-                        QDataStream out(&ba, QIODevice::ReadWrite);
-                        out << m_metadata;
-                        out.commitTransaction();
-                        query.addBindValue(QVariant::fromValue(m_ID.toByteArray()));
-                        query.addBindValue(QVariant::fromValue(m_title.toLocal8Bit()));
-                        query.addBindValue(QVariant::fromValue(ba));
+                        query.bindValue(":ID", QVariant::fromValue(m_ID));
+                        query.bindValue(":title", QVariant::fromValue(m_title));
 
-                        qDebug() << query.boundValues();
+                        query.bindValue(":metadata", QVariant::fromValue(m_metadata));
                         auto res = query.exec();
                         if (!res) {
-                            qCritical() << query.executedQuery();
-                            qCritical() << query.lastError() << "when creating a new item of Note";
+                                qCritical() << query.lastError() << "when creating a new item of Note";
                         }
                         m_NEW = false;
                 } else {
@@ -161,6 +156,54 @@ VALUES( ? ,   ?  , ? );
                 }
         }
 
+
+        QList<Note*> childNotes() {
+                auto tq = QStringLiteral("SELECT * FROM Note WHERE PARENT_Note_ID = :parent_id");
+                QSqlQuery query;
+                query.prepare(tq);
+                query.bindValue(":parent_id", m_ID);
+                auto ok = query.exec();
+                if (!ok) {
+                        qCritical() << query.lastError() << "when loading an Note children of a Note";
+                }
+                QList<Note*> ret;
+
+                while (query.next()) {
+                        auto add = new Note(query.value("ID").value<QUuid>());
+
+                        add->setProperty("title", query.value("title"));
+
+                        add->setProperty("metadata", query.value("metadata"));
+
+                        ret << add;
+                }
+                return ret;
+        }
+        void addChildNote(Note* child) {
+                auto tq = QStringLiteral("UPDATE Note SET PARENT_Note_ID = :new_parent_id WHERE ID = :child_id ");
+                QSqlQuery query;
+                query.prepare(tq);
+                query.bindValue(":new_parent_id", m_ID);
+                query.bindValue(":child_id", child->m_ID);
+                auto ok = query.exec();
+                if (!ok) {
+                        qCritical() << query.lastError() << "when adding a new Note to a parent Note";
+                }
+                child->m_parent_Note_ID = m_ID;
+        }
+        void removeChildNote(Note* child) {
+                auto tq = QStringLiteral("UPDATE Note SET PARENT_Note_ID = NULL WHERE ID = :child_id ");
+                QSqlQuery query;
+                query.prepare(tq);
+                query.bindValue(":child_id", child->m_ID);
+                auto ok = query.exec();
+                if (!ok) {
+                        qCritical() << query.lastError() << "when removing a Note from a parent Note";
+                }
+                child->m_parent_Note_ID = QUuid();
+        }
+
+
         static Note* newNote() {
                 auto ret = new Note(QUuid::createUuid());
                 ret->m_NEW = true;
@@ -187,16 +230,21 @@ VALUES( ? ,   ?  , ? );
 
         static void prepareDatabase() {
                 auto tq = QStringLiteral(R"RJIENRLWEY(
-                CREATE TABLE IF NOT EXISTS Note (
+                CREATE TABLE IF NOT EXISTS Note(
                         ID BLOB NOT NULL,
+
+                        PARENT_Note_ID BLOB,
+
                         title BLOB NOT NULL,
                         metadata BLOB NOT NULL,
                         PRIMARY KEY (ID))
                 )RJIENRLWEY");
                 QSqlQuery query;
                 query.prepare(tq);
-                qDebug() << query.exec();
-                qDebug() << query.lastError();
+                auto ok = query.exec();
+                if (!ok) {
+                        qCritical() << query.lastError();
+                }
         }
 
 };

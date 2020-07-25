@@ -280,6 +280,7 @@ var tmpl = template.Must(template.New("").Funcs(template.FuncMap{
 #include <QSqlQuery>
 #include <QSqlError>
 #include <QVariant>
+#include <QDebug>
 {{ StringJoin $root.LocateImports "\n" }}
 
 #include "Database.h"
@@ -296,6 +297,13 @@ class {{ .Name }} : public QObject {
 			db_initialized = true;
 		}
 	}
+
+	{{ range $parent := $root.ParentedBy .Name }}
+	QUuid m_parent_{{ $parent }}_ID;
+	{{ if ne $parent $item.Name }}
+	friend class {{ $parent }};
+	{{ end }}
+	{{ end }}
 
 	QUuid m_ID;
 	bool m_NEW = false;
@@ -386,6 +394,52 @@ VALUES
 		}
 	}
 
+	{{ range $child := .Children }}
+	QList<{{ $child }}*> child{{ $child }}s() {
+		auto tq = QStringLiteral("SELECT * FROM {{ $child }} WHERE PARENT_{{ $item.Name }}_ID = :parent_id");
+		QSqlQuery query;
+		query.prepare(tq);
+		query.bindValue(":parent_id", m_ID);
+		auto ok = query.exec();
+		if (!ok) {
+			qCritical() << query.lastError() << "when loading an {{ $child }} children of a {{ $item.Name }}";
+		}
+		QList<{{ $child }}*> ret;
+		{{ $childKind := index $root.Objects $child }}
+		while (query.next()) {
+			auto add = new {{ $child }}(query.value("ID").value<QUuid>());
+		{{ range $prop := $childKind.Properties }}
+			add->setProperty("{{ $prop.Name }}", query.value("{{ $prop.Name }}"));
+		{{ end }}
+			ret << add;
+		}
+		return ret;
+	}
+	void addChild{{ $child }}({{ $child }}* child) {
+		auto tq = QStringLiteral("UPDATE {{ $child }} SET PARENT_{{ $item.Name }}_ID = :new_parent_id WHERE ID = :child_id ");
+		QSqlQuery query;
+		query.prepare(tq);
+		query.bindValue(":new_parent_id", m_ID);
+		query.bindValue(":child_id", child->m_ID);
+		auto ok = query.exec();
+		if (!ok) {
+			qCritical() << query.lastError() << "when adding a new {{ $child }} to a parent {{ $item.Name }}";
+		}
+		child->m_parent_{{ $item.Name }}_ID = m_ID;
+	}
+	void removeChild{{ $child }}({{ $child }}* child) {
+		auto tq = QStringLiteral("UPDATE {{ $child }} SET PARENT_{{ $item.Name }}_ID = NULL WHERE ID = :child_id ");
+		QSqlQuery query;
+		query.prepare(tq);
+		query.bindValue(":child_id", child->m_ID);
+		auto ok = query.exec();
+		if (!ok) {
+			qCritical() << query.lastError() << "when removing a {{ $child }} from a parent {{ $item.Name }}";
+		}
+		child->m_parent_{{ $item.Name }}_ID = QUuid();
+	}
+	{{ end }}
+
 	static {{ .Name }}* new{{ .Name }}() {
 		auto ret = new {{.Name}}(QUuid::createUuid());
 		ret->m_NEW = true;
@@ -414,6 +468,9 @@ VALUES
 		auto tq = QStringLiteral(R"RJIENRLWEY(
 		CREATE TABLE IF NOT EXISTS {{ $item.Name }}(
 			ID BLOB NOT NULL,
+			{{ range $parent := $root.ParentedBy .Name }}
+			PARENT_{{ $parent }}_ID BLOB,
+			{{ end }}
 			{{ range $prop := .Properties -}}
 			{{ $prop.Name }} BLOB NOT NULL,
 			{{ end -}}

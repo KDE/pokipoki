@@ -10,5 +10,11 @@ int main(int argc, char *argv[])
     note->set_title("yeet");
     note->commit();
 
+    auto child = Note::newNote();
+    child->set_title("ohno");
+    child->commit();
+
+    note->addChildNote(child);
+
     return 0;
 }
