@@ -309,6 +309,14 @@ var tmpl = template.Must(template.New("").Funcs(template.FuncMap{
 class {{ .Name }} : public QObject {
 	Q_OBJECT
 
+	struct Change {
+		{{ range $prop := .Properties }}
+		{{ $propType := $root.AlwaysType $prop.Type }}
+		{{ $propTypeName := StringJoin $propType "" }}
+		Optional<{{ $propTypeName }}> previous{{ $prop.Name }}Value;
+		{{ end }}
+	};
+
 	{{ .Name }}(QUuid ID) : QObject(nullptr), m_ID(ID) {
 		static bool db_initialized = false;
 		if (!db_initialized) {
@@ -340,6 +348,24 @@ class {{ .Name }} : public QObject {
 
 	QUuid m_ID;
 	bool m_NEW = false;
+	bool m_DIRTY = false;
+	bool dirty() const { return m_DIRTY; }
+	bool m_CAN_UNDO = false;
+	bool canUndo() const { return m_CAN_UNDO; }
+	bool m_CAN_REDO = false;
+	bool canRedo() const { return m_CAN_REDO; }
+
+	Q_PROPERTY(bool dirty READ dirty NOTIFY dirtyChanged)
+	Q_SIGNAL void dirtyChanged();
+
+	Q_PROPERTY(bool canUndo READ canUndo NOTIFY canUndoChanged)
+	Q_SIGNAL void canUndoChanged();
+
+	Q_PROPERTY(bool canRedo READ canRedo NOTIFY canRedoChanged)
+	Q_SIGNAL void canRedoChanged();
+
+	QList<Change> m_UNDO_STACK;
+	QList<Change> m_REDO_STACK;
 
 	{{ range $prop := .Properties }}
 	{{ $propType := $root.AlwaysType $prop.Type }}
@@ -350,7 +376,106 @@ class {{ .Name }} : public QObject {
 	bool m_{{$prop.Name}}_dirty;
 	{{ end }}
 
+	void evaluate_can_undo_changed() {
+		auto setUndo = [this](bool newUndo){
+			if (newUndo != m_CAN_UNDO) {
+				m_CAN_UNDO = newUndo;
+				Q_EMIT canUndoChanged();
+			}
+		};
+		if (m_DIRTY) {
+			setUndo(true);
+			return;
+		}
+		if (!m_UNDO_STACK.empty()) {
+			setUndo(true);
+			return;
+		}
+		setUndo(false);
+	}
+
+	void evaluate_can_redo_changed() {
+		auto setRedo = [this](bool newRedo){
+			if (newRedo != m_CAN_REDO) {
+				m_CAN_REDO = newRedo;
+				Q_EMIT canRedoChanged();
+			}
+		};
+		if (m_DIRTY) {
+			setRedo(false);
+			return;
+		}
+		if (!m_REDO_STACK.empty()) {
+			setRedo(true);
+			return;
+		}
+		setRedo(false);
+	}
+
+	void clear_redo() {
+		m_REDO_STACK.clear();
+		evaluate_can_redo_changed();
+	}
+
+	void evaluate_dirty_changed() {
+		if (m_DIRTY) {
+			auto new_dirty = false;
+			{{ range $prop := .Properties }}
+			if (m_{{$prop.Name}}_dirty) {
+				new_dirty = true;
+			}
+			{{ end }}
+			if (!new_dirty) {
+				m_DIRTY = false;
+			}
+			Q_EMIT dirtyChanged();
+		} else {
+			{{ range $prop := .Properties }}
+			if (m_{{$prop.Name}}_dirty) {
+				m_DIRTY = true;
+				Q_EMIT dirtyChanged();
+				return;
+			}
+			{{ end }}
+		}
+		evaluate_can_undo_changed();
+	}
+
 public:
+
+	Q_INVOKABLE void undo() {
+		if (m_DIRTY) {
+			discard_all_changes();
+			evaluate_can_undo_changed();
+			return;
+		}
+		if (!m_UNDO_STACK.empty()) {
+			auto last = m_UNDO_STACK.takeLast();
+			{{ range $prop := .Properties }}
+			if (last.previous{{ $prop.Name }}Value.has_value()) {
+				last.previous{{ $prop.Name }}Value.swap(m_{{$prop.Name}});
+			}
+			{{ end }}
+			m_REDO_STACK << last;
+			evaluate_can_undo_changed();
+			evaluate_can_redo_changed();
+		}
+	}
+
+	Q_INVOKABLE void redo() {
+		if (!m_REDO_STACK.empty()) {
+			auto last = m_REDO_STACK.takeLast();
+			{{ range $prop := .Properties }}
+			if (last.previous{{ $prop.Name }}Value.has_value()) {
+				last.previous{{ $prop.Name }}Value.swap(m_{{$prop.Name}});
+			}
+			{{ end }}
+			m_UNDO_STACK << last;
+			evaluate_can_undo_changed();
+			evaluate_can_redo_changed();
+		}
+	}
+
 	{{ range $prop := .Properties }}
 	{{ $propType := $root.AlwaysType $prop.Type }}
 	{{ $propTypeName := StringJoin $propType "" }}
@@ -364,12 +489,16 @@ public:
 		m_{{$prop.Name}}_dirty = true;
 		m_{{$prop.Name}} = val;
 		Q_EMIT void {{$prop.Name}}Changed();
+		clear_redo();
+		evaluate_dirty_changed();
+		evaluate_can_undo_changed();
 	}
 	void discard_{{$prop.Name}}_changes() {
 		if (m_{{$prop.Name}}_dirty) {
 			m_{{$prop.Name}}_dirty = false;
 			m_{{$prop.Name}} = m_{{$prop.Name}}_prev;
 			Q_EMIT void {{$prop.Name}}Changed();
+			evaluate_dirty_changed();
 		}
 	}
 	{{ end }}
@@ -382,6 +511,7 @@ public:
 			Q_EMIT void {{$prop.Name}}Changed();
 		}
 		{{ end }}
+		evaluate_dirty_changed();
 	}
 
 	void save() {
@@ -409,8 +539,10 @@ VALUES
 			}
 			m_NEW = false;
 		} else {
+		Change changes;
 		{{ range $prop := .Properties }}
 		if (m_{{$prop.Name}}_dirty) {
+			changes.previous{{$prop.Name}}Value.copy(m_{{ $prop.Name }}_prev);
 			QSqlQuery query;
 			auto tq = QStringLiteral(R"RJIENRLWEY( UPDATE {{ $item.Name}} SET {{$prop.Name}} = :val WHERE ID = :id )RJIENRLWEY");
 			query.prepare(tq);
@@ -423,7 +555,8 @@ VALUES
 			m_{{$prop.Name}}_dirty = false;
 		}
 		{{ end }}
-			
+		m_UNDO_STACK << changes;
+		evaluate_can_undo_changed();
 		}
 	}
 

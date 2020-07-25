@@ -1,4 +1,4 @@
-project('pokipoki', 'cpp')
+project('pokipoki', 'cpp', default_options: ['cpp_std=c++17'])
 
 qt5 = import('qt5')
 qt5_deps = dependency('qt5', modules: ['Core', 'Sql'])

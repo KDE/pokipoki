@@ -4,6 +4,7 @@
 #include <QSqlQuery>
 #include <QList>
 #include <QVariant>
+#include <utility>
 
 class PPDatabase : public QObject
 {
@@ -59,6 +60,35 @@ struct Between : Predicate {
     void bindToQuery(QSqlQuery *query) override {
         query->bindValue(QStringLiteral(":between_first_%1").arg(this->column), this->first);
         query->bindValue(QStringLiteral(":between_second_%1").arg(this->column), this->second);
+    }
+};
+
+template<class T>
+struct Optional {
+private:
+    bool hasValue;
+    T value;
+public:
+    ~Optional<T>() {}
+    bool has_value() const {
+        return hasValue;
+    }
+    void reset() {
+        hasValue = false;
+        value.null = true;
+    }
+    void swap(T& val) {
+        std::swap(value, val);
+    }
+    void copy(const T& val) {
+        hasValue = true;
+        value = val;
+    }
+    T operator*() {
+        return value;
+    }
+    T operator->() {
+        return value;
     }
 };
 

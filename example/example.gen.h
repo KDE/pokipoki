@@ -19,6 +19,18 @@
 class Note : public QObject {
 	Q_OBJECT
 
+	struct Change {
+		
+		
+		
+		Optional<QString> previoustitleValue;
+		
+		
+		
+		Optional<QMap<QString,QString>> previousmetadataValue;
+		
+	};
+
 	Note(QUuid ID) : QObject(nullptr), m_ID(ID) {
 		static bool db_initialized = false;
 		if (!db_initialized) {
@@ -48,6 +60,24 @@ class Note : public QObject {
 
 	QUuid m_ID;
 	bool m_NEW = false;
+	bool m_DIRTY = false;
+	bool dirty() const { return m_DIRTY; }
+	bool m_CAN_UNDO = false;
+	bool canUndo() const { return m_CAN_UNDO; }
+	bool m_CAN_REDO = false;
+	bool canRedo() const { return m_CAN_REDO; }
+
+	Q_PROPERTY(bool dirty READ dirty NOTIFY dirtyChanged)
+	Q_SIGNAL void dirtyChanged();
+
+	Q_PROPERTY(bool canUndo READ canUndo NOTIFY canUndoChanged)
+	Q_SIGNAL void canUndoChanged();
+
+	Q_PROPERTY(bool canRedo READ canRedo NOTIFY canRedoChanged)
+	Q_SIGNAL void canRedoChanged();
+
+	QList<Change> m_UNDO_STACK;
+	QList<Change> m_REDO_STACK;
 
 	
 	
@@ -65,7 +95,124 @@ class Note : public QObject {
 	bool m_metadata_dirty;
 	
 
+	void evaluate_can_undo_changed() {
+		auto setUndo = [this](bool newUndo){
+			if (newUndo != m_CAN_UNDO) {
+				m_CAN_UNDO = newUndo;
+				Q_EMIT canUndoChanged();
+			}
+		};
+		if (m_DIRTY) {
+			setUndo(true);
+			return;
+		}
+		if (!m_UNDO_STACK.empty()) {
+			setUndo(true);
+			return;
+		}
+		setUndo(false);
+	}
+
+	void evaluate_can_redo_changed() {
+		auto setRedo = [this](bool newRedo){
+			if (newRedo != m_CAN_REDO) {
+				m_CAN_REDO = newRedo;
+				Q_EMIT canRedoChanged();
+			}
+		};
+		if (m_DIRTY) {
+			setRedo(false);
+			return;
+		}
+		if (!m_REDO_STACK.empty()) {
+			setRedo(true);
+			return;
+		}
+		setRedo(false);
+	}
+
+	void clear_redo() {
+		m_REDO_STACK.clear();
+		evaluate_can_redo_changed();
+	}
+
+	void evaluate_dirty_changed() {
+		if (m_DIRTY) {
+			auto new_dirty = false;
+			
+			if (m_title_dirty) {
+				new_dirty = true;
+			}
+			
+			if (m_metadata_dirty) {
+				new_dirty = true;
+			}
+			
+			if (!new_dirty) {
+				m_DIRTY = false;
+			}
+			Q_EMIT dirtyChanged();
+		} else {
+			
+			if (m_title_dirty) {
+				m_DIRTY = true;
+				Q_EMIT dirtyChanged();
+				return;
+			}
+			
+			if (m_metadata_dirty) {
+				m_DIRTY = true;
+				Q_EMIT dirtyChanged();
+				return;
+			}
+			
+		}
+		evaluate_can_undo_changed();
+	}
+
 public:
+
+	Q_INVOKABLE void undo() {
+		if (m_DIRTY) {
+			discard_all_changes();
+			evaluate_can_undo_changed();
+			return;
+		}
+		if (!m_UNDO_STACK.empty()) {
+			auto last = m_UNDO_STACK.takeLast();
+			
+			if (last.previoustitleValue.has_value()) {
+				last.previoustitleValue.swap(m_title);
+			}
+			
+			if (last.previousmetadataValue.has_value()) {
+				last.previousmetadataValue.swap(m_metadata);
+			}
+			
+			m_REDO_STACK << last;
+			evaluate_can_undo_changed();
+			evaluate_can_redo_changed();
+		}
+	}
+
+	Q_INVOKABLE void redo() {
+		if (!m_REDO_STACK.empty()) {
+			auto last = m_REDO_STACK.takeLast();
+			
+			if (last.previoustitleValue.has_value()) {
+				last.previoustitleValue.swap(m_title);
+			}
+			
+			if (last.previousmetadataValue.has_value()) {
+				last.previousmetadataValue.swap(m_metadata);
+			}
+			
+			m_UNDO_STACK << last;
+			evaluate_can_undo_changed();
+			evaluate_can_redo_changed();
+		}
+	}
+
 	
 	
 	
@@ -79,12 +226,16 @@ public:
 		m_title_dirty = true;
 		m_title = val;
 		Q_EMIT void titleChanged();
+		clear_redo();
+		evaluate_dirty_changed();
+		evaluate_can_undo_changed();
 	}
 	void discard_title_changes() {
 		if (m_title_dirty) {
 			m_title_dirty = false;
 			m_title = m_title_prev;
 			Q_EMIT void titleChanged();
+			evaluate_dirty_changed();
 		}
 	}
 	
@@ -100,12 +251,16 @@ public:
 		m_metadata_dirty = true;
 		m_metadata = val;
 		Q_EMIT void metadataChanged();
+		clear_redo();
+		evaluate_dirty_changed();
+		evaluate_can_undo_changed();
 	}
 	void discard_metadata_changes() {
 		if (m_metadata_dirty) {
 			m_metadata_dirty = false;
 			m_metadata = m_metadata_prev;
 			Q_EMIT void metadataChanged();
+			evaluate_dirty_changed();
 		}
 	}
 	
@@ -124,6 +279,7 @@ public:
 			Q_EMIT void metadataChanged();
 		}
 		
+		evaluate_dirty_changed();
 	}
 
 	void save() {
@@ -146,8 +302,10 @@ VALUES
 			}
 			m_NEW = false;
 		} else {
+		Change changes;
 		
 		if (m_title_dirty) {
+			changes.previoustitleValue.copy(m_title_prev);
 			QSqlQuery query;
 			auto tq = QStringLiteral(R"RJIENRLWEY( UPDATE Note SET title = :val WHERE ID = :id )RJIENRLWEY");
 			query.prepare(tq);
@@ -161,6 +319,7 @@ VALUES
 		}
 		
 		if (m_metadata_dirty) {
+			changes.previousmetadataValue.copy(m_metadata_prev);
 			QSqlQuery query;
 			auto tq = QStringLiteral(R"RJIENRLWEY( UPDATE Note SET metadata = :val WHERE ID = :id )RJIENRLWEY");
 			query.prepare(tq);
@@ -173,7 +332,8 @@ VALUES
 			m_metadata_dirty = false;
 		}
 		
-			
+		m_UNDO_STACK << changes;
+		evaluate_can_undo_changed();
 		}
 	}
 
