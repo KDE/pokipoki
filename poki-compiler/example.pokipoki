@@ -1,0 +1,5 @@
+object Note {
+    title String
+    metadata Map[String]String
+    Note
+}

@@ -1,15 +1,14 @@
 #include <QCoreApplication>
-#include "example.h"
+#include "example.gen.h"
 
 int main(int argc, char *argv[])
 {
     auto app = new QCoreApplication(argc, argv);
     app->setApplicationName("fimbeb-example");
 
-    auto note = new Note;
-    note->text = "yeet";
-
-    FBDatabase::instance()->save(note);
+    auto note = Note::newNote();
+    note->set_title("yeet");
+    note->commit();
 
     return 0;
 }

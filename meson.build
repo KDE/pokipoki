@@ -1,9 +1,10 @@
-project('fimbeb', 'cpp')
+project('pokipoki', 'cpp')
 
 qt5 = import('qt5')
 qt5_deps = dependency('qt5', modules: ['Core', 'Sql'])
 
-fimbeb_headers = include_directories('src/headers')
+pokipoki_headers = include_directories('libpokipoki/headers')
 
-subdir('src')
+subdir('poki-compiler')
+subdir('libpokipoki')
 subdir('example')

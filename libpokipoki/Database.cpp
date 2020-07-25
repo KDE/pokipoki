@@ -1,9 +1,27 @@
+#include <QCoreApplication>
+#include <QDebug>
+#include <QDir>
+#include <QMetaProperty>
+#include <QMutex>
+#include <QPointer>
+#include <QSqlDatabase>
+#include <QSqlError>
+#include <QSqlQuery>
+#include <QStandardPaths>
+#include <QStringList>
+#include <QVariant>
+
 #include "Database.h"
-#include "Database+Private.h"
 
 const QString DRIVER("QSQLITE");
 
-FBDatabase::FBDatabase(QObject *parent) : QObject(parent)
+class PPDatabase::Private
+{
+    friend class PPDatabase;
+    QSqlDatabase db;
+};
+
+PPDatabase::PPDatabase(QObject *parent) : QObject(parent)
 {
     d_ptr = new Private;
 
@@ -18,19 +36,13 @@ FBDatabase::FBDatabase(QObject *parent) : QObject(parent)
     Q_ASSERT(d_ptr->db.open());
 }
 
-void FBDatabase::save(FBObject* object)
-{
-    d_ptr->initializeForObject(object);
-    d_ptr->insert(object);
-}
-
-FBDatabase* FBDatabase::instance()
+PPDatabase* PPDatabase::instance()
 {
     static QMutex mutex;
     mutex.lock();
-    static QPointer<FBDatabase> db;
+    static QPointer<PPDatabase> db;
     if (db.isNull()) {
-        db = new FBDatabase(qApp);
+        db = new PPDatabase(qApp);
     }
     mutex.unlock();
     return db;
