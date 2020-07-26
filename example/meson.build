@@ -1,5 +1,6 @@
 example_moc_files = qt5.preprocess(
   moc_headers: 'example.gen.h',
+  include_directories: pokipoki_headers,
 )
 
 exe = executable('fimbeb-example',

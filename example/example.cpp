@@ -7,22 +7,20 @@ int main(int argc, char *argv[])
     app->setApplicationName("fimbeb-example");
 
     auto note = Note::newNote();
-    note->set_title("yeet");
     note->save();
 
-    auto child = Note::newNote();
-    child->set_title("ohno");
-    child->save();
+    note->set_title("yeet one");
+    note->save();
 
-    note->addChildNote(child);
+    note->set_title("yeet two");
+    note->save();
 
-    auto data = Note::where({ like(title, QStringLiteral("%ye%")) });
+    note->set_title("yeet three");
+    note->save();
 
-    auto model = new NoteModel;
-
-    app->exec();
-
-    delete model;
+    for (; pUR->canUndo(); pUR->undo()) {
+        qDebug() << note->title();
+    }
 
     return 0;
 }

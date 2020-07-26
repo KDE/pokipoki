@@ -6,6 +6,9 @@
 #include <QVariant>
 #include <utility>
 
+#define pDB PPDatabase::instance()
+#define pUR PPUndoRedoStack::instance()
+
 class PPDatabase : public QObject
 {
     Q_OBJECT
@@ -17,6 +20,41 @@ private:
 
 public:
     static PPDatabase* instance();
+};
+
+class PPUndoRedoable
+{
+public:
+    virtual ~PPUndoRedoable() {}
+    virtual void undo() = 0;
+    virtual void redo() = 0;
+};
+Q_DECLARE_INTERFACE(PPUndoRedoable, "PPUndoRedoable")
+
+class PPUndoRedoStack : public QObject
+{
+    Q_OBJECT
+
+    Q_PROPERTY(bool canUndo READ canUndo NOTIFY canUndoChanged)
+    Q_PROPERTY(bool canRedo READ canRedo NOTIFY canRedoChanged)
+
+private:
+    PPUndoRedoStack(QObject *parent);
+    class Private;
+    Private *d_ptr;
+
+public:
+    static PPUndoRedoStack* instance();
+    void undoItemAdded(PPUndoRedoable* item);
+    void undoItemRemoved(PPUndoRedoable* item);
+    void redoItemAdded(PPUndoRedoable* item);
+    void redoItemRemoved(PPUndoRedoable* item);
+    bool canUndo() const;
+    bool canRedo() const;
+    Q_SIGNAL void canUndoChanged();
+    Q_SIGNAL void canRedoChanged();
+    Q_INVOKABLE void undo();
+    Q_INVOKABLE void redo();
 };
 
 struct Predicate {

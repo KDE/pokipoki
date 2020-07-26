@@ -310,8 +310,9 @@ var tmpl = template.Must(template.New("").Funcs(template.FuncMap{
 
 class {{ .Name }}Model;
 
-class {{ .Name }} : public QObject {
+class {{ .Name }} : public QObject, PPUndoRedoable {
 	Q_OBJECT
+	Q_INTERFACES(PPUndoRedoable)
 
 	struct Change {
 		{{ range $prop := .Properties }}
@@ -388,10 +389,6 @@ class {{ .Name }} : public QObject {
 				Q_EMIT canUndoChanged();
 			}
 		};
-		if (m_DIRTY) {
-			setUndo(true);
-			return;
-		}
 		if (!m_UNDO_STACK.empty()) {
 			setUndo(true);
 			return;
@@ -406,10 +403,6 @@ class {{ .Name }} : public QObject {
 				Q_EMIT canRedoChanged();
 			}
 		};
-		if (m_DIRTY) {
-			setRedo(false);
-			return;
-		}
 		if (!m_REDO_STACK.empty()) {
 			setRedo(true);
 			return;
@@ -448,13 +441,9 @@ class {{ .Name }} : public QObject {
 
 public:
 
-	Q_INVOKABLE void undo() {
-		if (m_DIRTY) {
-			discard_all_changes();
-			evaluate_can_undo_changed();
-			return;
-		}
+	Q_INVOKABLE void undo() override {
 		if (!m_UNDO_STACK.empty()) {
+			pUR->undoItemRemoved(this);
 			auto last = m_UNDO_STACK.takeLast();
 			{{ range $prop := .Properties }}
 			if (last.previous{{ $prop.Name }}Value.has_value()) {
@@ -462,13 +451,15 @@ public:
 			}
 			{{ end }}
 			m_REDO_STACK << last;
+			pUR->redoItemAdded(this);
 			evaluate_can_undo_changed();
 			evaluate_can_redo_changed();
 		}
 	}
 
-	Q_INVOKABLE void redo() {
+	Q_INVOKABLE void redo() override {
 		if (!m_REDO_STACK.empty()) {
+			pUR->redoItemRemoved(this);
 			auto last = m_REDO_STACK.takeLast();
 			{{ range $prop := .Properties }}
 			if (last.previous{{ $prop.Name }}Value.has_value()) {
@@ -561,6 +552,7 @@ VALUES
 		}
 		{{ end }}
 		m_UNDO_STACK << changes;
+		pUR->undoItemAdded(this);
 		evaluate_can_undo_changed();
 		}
 	}
