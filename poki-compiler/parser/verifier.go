@@ -679,7 +679,7 @@ VALUES
 
 class {{ .Name }}Model : public QAbstractListModel {
 	mutable QSqlQuery m_query;
-	const int fetch_size = 255;
+	static const int fetch_size = 255;
 	int m_rowCount = 0;
 	int m_bottom = 0;
 	bool m_atEnd = false;
@@ -717,6 +717,9 @@ public:
 		{{ range $index, $prop := .Properties -}}
 		{{ $prop.Name }} {{ if eq $index 0 }}= Qt::UserRole{{ end }},
 		{{ end }}
+		{{ range $child := .Children -}}
+		children{{ $child }},
+		{{ end }}
 	};
 
 	{{.Name}}Model(QObject *parent = nullptr) : QAbstractListModel(parent)
@@ -725,6 +728,22 @@ public:
 		m_query.exec();
 		prefetch(fetch_size);
 	}
+
+	{{ range $parent := $root.ParentedBy .Name }}
+	static {{ $item.Name }}Model* with{{ $parent }}Parent(const QUuid& id) {
+		static QMap<QUuid,QPointer<{{ $item.Name }}Model>> s_models;
+		if (s_models.value(id).isNull()) {
+			auto childModel = new {{ $item.Name }}Model();
+			childModel->m_query.prepare("SELECT * FROM {{ $item.Name }} WHERE PARENT_{{ $parent}}_ID = :parent_id");
+			childModel->m_query.bindValue(":parent_id", id);
+			childModel->m_bottom = 0;
+			childModel->m_query.exec();
+			childModel->prefetch(fetch_size);
+			s_models[id] = childModel;
+		}
+		return s_models[id].data();
+	}
+	{{ end }}
 
 	void fetchMore(const QModelIndex &parent) override {
 		prefetch(m_bottom + fetch_size);
@@ -743,6 +762,9 @@ public:
 		auto rn = QAbstractItemModel::roleNames();
 		{{ range $index, $prop := .Properties -}}
 		rn[{{ $item.Name }}Data::{{ $prop.Name }}] = QByteArray("{{ $prop.Name }}");
+		{{ end }}
+		{{ range $child := .Children -}}
+		rn[{{ $item.Name }}Data::children{{ $child }}] = QByteArray("children-{{ $child }}");
 		{{ end }}
 		return rn;
 	}
@@ -768,6 +790,10 @@ public:
 		case {{ $item.Name }}Data::{{ $prop.Name }}:
 			return QVariant::fromValue(m_items[item.row()]->{{ $prop.Name }}());
 		{{ end }}
+		{{ range $child := .Children -}}
+		case {{ $item.Name }}Data::children{{ $child }}:
+			return QVariant::fromValue({{ $child }}Model::with{{ $item.Name }}Parent(m_items[item.row()]->m_ID));
+		{{ end }}
 		}
 
 		return QVariant();
@@ -778,7 +804,6 @@ public:
 	}
 
 	bool setData(const QModelIndex &item, const QVariant &value, int role = Qt::EditRole) override {
-		qDebug() << item << value << role << Qt::EditRole;
 		if (!m_items.contains(item.row())) {
 			if (!m_query.seek(item.row())) {
 				qCritical() << m_query.lastError() << "when seeking data for {{ $item.Name }}";
@@ -798,7 +823,6 @@ public:
 			{{ $propTypeName := StringJoin $propType "" }}
 			case {{ $item.Name }}Data::{{ $prop.Name }}:
 				m_items[item.row()]->set_{{ $prop.Name }}(value.value<{{ $propTypeName }}>());
-				qDebug() << "emitting data changed...";
 				Q_EMIT dataChanged(item, item, {role});
 				return true;
 			{{ end }}

@@ -459,7 +459,7 @@ VALUES
 
 class NoteModel : public QAbstractListModel {
 	mutable QSqlQuery m_query;
-	const int fetch_size = 255;
+	static const int fetch_size = 255;
 	int m_rowCount = 0;
 	int m_bottom = 0;
 	bool m_atEnd = false;
@@ -497,6 +497,8 @@ public:
 		title = Qt::UserRole,
 		metadata ,
 		
+		childrenNote,
+		
 	};
 
 	NoteModel(QObject *parent = nullptr) : QAbstractListModel(parent)
@@ -505,6 +507,22 @@ public:
 		m_query.exec();
 		prefetch(fetch_size);
 	}
+
+	
+	static NoteModel* withNoteParent(const QUuid& id) {
+		static QMap<QUuid,QPointer<NoteModel>> s_models;
+		if (s_models.value(id).isNull()) {
+			auto childModel = new NoteModel();
+			childModel->m_query.prepare("SELECT * FROM Note WHERE PARENT_Note_ID = :parent_id");
+			childModel->m_query.bindValue(":parent_id", id);
+			childModel->m_bottom = 0;
+			childModel->m_query.exec();
+			childModel->prefetch(fetch_size);
+			s_models[id] = childModel;
+		}
+		return s_models[id].data();
+	}
+	
 
 	void fetchMore(const QModelIndex &parent) override {
 		prefetch(m_bottom + fetch_size);
@@ -523,6 +541,8 @@ public:
 		auto rn = QAbstractItemModel::roleNames();
 		rn[NoteData::title] = QByteArray("title");
 		rn[NoteData::metadata] = QByteArray("metadata");
+		
+		rn[NoteData::childrenNote] = QByteArray("children-Note");
 		
 		return rn;
 	}
@@ -551,6 +571,9 @@ public:
 		case NoteData::metadata:
 			return QVariant::fromValue(m_items[item.row()]->metadata());
 		
+		case NoteData::childrenNote:
+			return QVariant::fromValue(NoteModel::withNoteParent(m_items[item.row()]->m_ID));
+		
 		}
 
 		return QVariant();
@@ -561,7 +584,6 @@ public:
 	}
 
 	bool setData(const QModelIndex &item, const QVariant &value, int role = Qt::EditRole) override {
-		qDebug() << item << value << role << Qt::EditRole;
 		if (!m_items.contains(item.row())) {
 			if (!m_query.seek(item.row())) {
 				qCritical() << m_query.lastError() << "when seeking data for Note";
@@ -582,14 +604,12 @@ public:
 			
 			case NoteData::title:
 				m_items[item.row()]->set_title(value.value<QString>());
-				qDebug() << "emitting data changed...";
 				Q_EMIT dataChanged(item, item, {role});
 				return true;
 			
 			
 			case NoteData::metadata:
 				m_items[item.row()]->set_metadata(value.value<QMap<QString,QString>>());
-				qDebug() << "emitting data changed...";
 				Q_EMIT dataChanged(item, item, {role});
 				return true;
 			
