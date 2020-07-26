@@ -18,5 +18,11 @@ int main(int argc, char *argv[])
 
     auto data = Note::where({ like(title, QStringLiteral("%ye%")) });
 
+    auto model = new NoteModel;
+
+    app->exec();
+
+    delete model;
+
     return 0;
 }

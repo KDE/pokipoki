@@ -2,6 +2,7 @@
 
 #pragma once
 
+#include <QAbstractListModel>
 #include <QDebug>
 #include <QMutex>
 #include <QMutexLocker>
@@ -16,6 +17,9 @@
 #include <QMap>
 
 #include "Database.h"
+
+class NoteModel;
+
 class Note : public QObject {
 	Q_OBJECT
 
@@ -57,6 +61,7 @@ class Note : public QObject {
 	QUuid m_parent_Note_ID;
 	
 	
+	friend class NoteModel;
 
 	QUuid m_ID;
 	bool m_NEW = false;
@@ -450,5 +455,147 @@ VALUES
 		}
 	}
 
+};
+
+class NoteModel : public QAbstractListModel {
+	mutable QSqlQuery m_query;
+	const int fetch_size = 255;
+	int m_rowCount = 0;
+	int m_bottom = 0;
+	bool m_atEnd = false;
+	mutable QMap<int,QSharedPointer<Note>> m_items;
+
+	void prefetch(int toRow) {
+		if (m_atEnd || toRow <= m_bottom)
+			return;
+
+		int oldBottom = m_bottom;
+		int newBottom = 0;
+		
+		if (m_query.seek(toRow)) {
+			newBottom = toRow;
+		} else {
+			int i =	oldBottom;
+			if (m_query.seek(i)) {
+				while (m_query.next()) i++;
+				newBottom = i;
+			} else {
+				newBottom = -1;
+			}
+			m_atEnd = true;
+		}
+		if (newBottom >= 0 && newBottom >= oldBottom) {
+			beginInsertRows(QModelIndex(), oldBottom + 1, newBottom);
+			m_bottom = newBottom;
+			endInsertRows();
+		}
+	}
+
+public:
+
+	enum NoteData {
+		title = Qt::UserRole,
+		metadata ,
+		
+	};
+
+	NoteModel(QObject *parent = nullptr) : QAbstractListModel(parent)
+	{
+		m_query.prepare("SELECT * FROM Note");
+		m_query.exec();
+		prefetch(fetch_size);
+	}
+
+	void fetchMore(const QModelIndex &parent) override {
+		prefetch(m_bottom + fetch_size);
+	}
+
+	bool canFetchMore(const QModelIndex &parent) const override {
+		return !m_atEnd;
+	}
+
+	int rowCount(const QModelIndex &parent = QModelIndex()) const override {
+		Q_UNUSED(parent)
+		return m_bottom;
+	}
+
+	QHash<int, QByteArray> roleNames() const {
+		auto rn = QAbstractItemModel::roleNames();
+		rn[NoteData::title] = QByteArray("title");
+		rn[NoteData::metadata] = QByteArray("metadata");
+		
+		return rn;
+	}
+
+	QVariant data(const QModelIndex &item, int role) const override {
+		if (!item.isValid()) return QVariant();
+
+		if (!m_items.contains(item.row())) {
+			if (!m_query.seek(item.row())) {
+				qCritical() << m_query.lastError() << "when seeking data for Note";
+				return QVariant();
+			}
+
+			auto add = Note::withID(m_query.value("ID").value<QUuid>());
+			
+			add->setProperty("title", m_query.value("title"));
+			
+			add->setProperty("metadata", m_query.value("metadata"));
+			
+			m_items.insert(item.row(), add);
+		}
+
+		switch (role) {
+		case NoteData::title:
+			return QVariant::fromValue(m_items[item.row()]->title());
+		case NoteData::metadata:
+			return QVariant::fromValue(m_items[item.row()]->metadata());
+		
+		}
+
+		return QVariant();
+	}
+
+	Qt::ItemFlags flags(const QModelIndex &index) const {
+		return Qt::ItemIsEditable | Qt::ItemIsSelectable | Qt::ItemIsEnabled;
+	}
+
+	bool setData(const QModelIndex &item, const QVariant &value, int role = Qt::EditRole) override {
+		qDebug() << item << value << role << Qt::EditRole;
+		if (!m_items.contains(item.row())) {
+			if (!m_query.seek(item.row())) {
+				qCritical() << m_query.lastError() << "when seeking data for Note";
+				return false;
+			}
+
+			auto add = Note::withID(m_query.value("ID").value<QUuid>());
+			
+			add->setProperty("title", m_query.value("title"));
+			
+			add->setProperty("metadata", m_query.value("metadata"));
+			
+			m_items.insert(item.row(), add);
+		}
+
+		switch (role) {
+			
+			
+			case NoteData::title:
+				m_items[item.row()]->set_title(value.value<QString>());
+				qDebug() << "emitting data changed...";
+				Q_EMIT dataChanged(item, item, {role});
+				return true;
+			
+			
+			case NoteData::metadata:
+				m_items[item.row()]->set_metadata(value.value<QMap<QString,QString>>());
+				qDebug() << "emitting data changed...";
+				Q_EMIT dataChanged(item, item, {role});
+				return true;
+			
+		}
+
+		return false;
+	}
 };
 

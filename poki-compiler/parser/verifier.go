@@ -291,6 +291,7 @@ var tmpl = template.Must(template.New("").Funcs(template.FuncMap{
 {{ $root := . }}
 #pragma once
 
+#include <QAbstractListModel>
 #include <QDebug>
 #include <QMutex>
 #include <QMutexLocker>
@@ -306,6 +307,9 @@ var tmpl = template.Must(template.New("").Funcs(template.FuncMap{
 #include "Database.h"
 
 {{- range $item := .Objects }}
+
+class {{ .Name }}Model;
+
 class {{ .Name }} : public QObject {
 	Q_OBJECT
 
@@ -345,6 +349,7 @@ class {{ .Name }} : public QObject {
 	friend class {{ $parent }};
 	{{ end }}
 	{{ end }}
+	friend class {{ .Name }}Model;
 
 	QUuid m_ID;
 	bool m_NEW = false;
@@ -670,6 +675,137 @@ VALUES
 		}
 	}
 
+};
+
+class {{ .Name }}Model : public QAbstractListModel {
+	mutable QSqlQuery m_query;
+	const int fetch_size = 255;
+	int m_rowCount = 0;
+	int m_bottom = 0;
+	bool m_atEnd = false;
+	mutable QMap<int,QSharedPointer<{{.Name}}>> m_items;
+
+	void prefetch(int toRow) {
+		if (m_atEnd || toRow <= m_bottom)
+			return;
+
+		int oldBottom = m_bottom;
+		int newBottom = 0;
+		
+		if (m_query.seek(toRow)) {
+			newBottom = toRow;
+		} else {
+			int i =	oldBottom;
+			if (m_query.seek(i)) {
+				while (m_query.next()) i++;
+				newBottom = i;
+			} else {
+				newBottom = -1;
+			}
+			m_atEnd = true;
+		}
+		if (newBottom >= 0 && newBottom >= oldBottom) {
+			beginInsertRows(QModelIndex(), oldBottom + 1, newBottom);
+			m_bottom = newBottom;
+			endInsertRows();
+		}
+	}
+
+public:
+
+	enum {{ .Name }}Data {
+		{{ range $index, $prop := .Properties -}}
+		{{ $prop.Name }} {{ if eq $index 0 }}= Qt::UserRole{{ end }},
+		{{ end }}
+	};
+
+	{{.Name}}Model(QObject *parent = nullptr) : QAbstractListModel(parent)
+	{
+		m_query.prepare("SELECT * FROM {{ .Name }}");
+		m_query.exec();
+		prefetch(fetch_size);
+	}
+
+	void fetchMore(const QModelIndex &parent) override {
+		prefetch(m_bottom + fetch_size);
+	}
+
+	bool canFetchMore(const QModelIndex &parent) const override {
+		return !m_atEnd;
+	}
+
+	int rowCount(const QModelIndex &parent = QModelIndex()) const override {
+		Q_UNUSED(parent)
+		return m_bottom;
+	}
+
+	QHash<int, QByteArray> roleNames() const {
+		auto rn = QAbstractItemModel::roleNames();
+		{{ range $index, $prop := .Properties -}}
+		rn[{{ $item.Name }}Data::{{ $prop.Name }}] = QByteArray("{{ $prop.Name }}");
+		{{ end }}
+		return rn;
+	}
+
+	QVariant data(const QModelIndex &item, int role) const override {
+		if (!item.isValid()) return QVariant();
+
+		if (!m_items.contains(item.row())) {
+			if (!m_query.seek(item.row())) {
+				qCritical() << m_query.lastError() << "when seeking data for {{ $item.Name }}";
+				return QVariant();
+			}
+
+			auto add = {{ .Name }}::withID(m_query.value("ID").value<QUuid>());
+			{{ range $prop := .Properties }}
+			add->setProperty("{{ $prop.Name }}", m_query.value("{{ $prop.Name }}"));
+			{{ end }}
+			m_items.insert(item.row(), add);
+		}
+
+		switch (role) {
+		{{ range $index, $prop := .Properties -}}
+		case {{ $item.Name }}Data::{{ $prop.Name }}:
+			return QVariant::fromValue(m_items[item.row()]->{{ $prop.Name }}());
+		{{ end }}
+		}
+
+		return QVariant();
+	}
+
+	Qt::ItemFlags flags(const QModelIndex &index) const {
+		return Qt::ItemIsEditable | Qt::ItemIsSelectable | Qt::ItemIsEnabled;
+	}
+
+	bool setData(const QModelIndex &item, const QVariant &value, int role = Qt::EditRole) override {
+		qDebug() << item << value << role << Qt::EditRole;
+		if (!m_items.contains(item.row())) {
+			if (!m_query.seek(item.row())) {
+				qCritical() << m_query.lastError() << "when seeking data for {{ $item.Name }}";
+				return false;
+			}
+
+			auto add = {{ .Name }}::withID(m_query.value("ID").value<QUuid>());
+			{{ range $prop := .Properties }}
+			add->setProperty("{{ $prop.Name }}", m_query.value("{{ $prop.Name }}"));
+			{{ end }}
+			m_items.insert(item.row(), add);
+		}
+
+		switch (role) {
+			{{ range $index, $prop := .Properties -}}
+			{{ $propType := $root.AlwaysType $prop.Type }}
+			{{ $propTypeName := StringJoin $propType "" }}
+			case {{ $item.Name }}Data::{{ $prop.Name }}:
+				m_items[item.row()]->set_{{ $prop.Name }}(value.value<{{ $propTypeName }}>());
+				qDebug() << "emitting data changed...";
+				Q_EMIT dataChanged(item, item, {role});
+				return true;
+			{{ end }}
+		}
+
+		return false;
+	}
 };
 
 {{ end -}}
