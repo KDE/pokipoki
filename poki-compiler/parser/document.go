@@ -15,5 +15,7 @@ type PokiPokiObject struct {
 
 // PokiPokiDocument represents the parsed form of a pokipoki file
 type PokiPokiDocument struct {
-	Objects map[string]PokiPokiObject
+	SchemaName    string
+	SchemaVersion int64
+	Objects       map[string]PokiPokiObject
 }

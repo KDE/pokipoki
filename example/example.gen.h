@@ -46,6 +46,15 @@ class Note : public QObject, PPUndoRedoable {
 		}
 	}
 
+	~Note() {
+		if (m_DELETE_PENDING) {
+			QSqlQuery query;
+			query.prepare(QStringLiteral("DELETE FROM Note WHERE ID = :ID"));
+			query.bindValue(":ID", QVariant::fromValue(m_ID));
+			query.exec();
+		}
+	}
+
 	static QSharedPointer<Note> withID(QUuid ID) {
 		static QMap<QUuid,QPointer<Note>> s_instances;
 		static QMutex s_mutex;
@@ -66,21 +75,15 @@ class Note : public QObject, PPUndoRedoable {
 
 	QUuid m_ID;
 	bool m_NEW = false;
+	bool m_DELETE_PENDING = false;
 	bool m_DIRTY = false;
-	bool dirty() const { return m_DIRTY; }
 	bool m_CAN_UNDO = false;
-	bool canUndo() const { return m_CAN_UNDO; }
 	bool m_CAN_REDO = false;
-	bool canRedo() const { return m_CAN_REDO; }
 
+	Q_PROPERTY(bool pendingDelete READ pendingDelete NOTIFY pendingDeleteChanged)
 	Q_PROPERTY(bool dirty READ dirty NOTIFY dirtyChanged)
-	Q_SIGNAL void dirtyChanged();
-
 	Q_PROPERTY(bool canUndo READ canUndo NOTIFY canUndoChanged)
-	Q_SIGNAL void canUndoChanged();
-
 	Q_PROPERTY(bool canRedo READ canRedo NOTIFY canRedoChanged)
-	Q_SIGNAL void canRedoChanged();
 
 	QList<Change> m_UNDO_STACK;
 	QList<Change> m_REDO_STACK;
@@ -170,6 +173,15 @@ class Note : public QObject, PPUndoRedoable {
 
 public:
 
+	Q_SIGNAL void pendingDeleteChanged();
+	Q_SIGNAL void dirtyChanged();
+	Q_SIGNAL void canUndoChanged();
+	Q_SIGNAL void canRedoChanged();
+	bool pendingDelete() const { return m_DELETE_PENDING; }
+	bool dirty() const { return m_DIRTY; }
+	bool canUndo() const { return m_CAN_UNDO; }
+	bool canRedo() const { return m_CAN_REDO; }
+
 	Q_INVOKABLE void undo() override {
 		if (!m_UNDO_STACK.empty()) {
 			pUR->undoItemRemoved(this);
@@ -206,6 +218,13 @@ public:
 			m_UNDO_STACK << last;
 			evaluate_can_undo_changed();
 			evaluate_can_redo_changed();
+		}
+	}
+
+	Q_INVOKABLE void stageDelete() {
+		if (!m_DELETE_PENDING) {
+			m_DELETE_PENDING = true;
+			pendingDeleteChanged();
 		}
 	}
 
@@ -278,8 +297,8 @@ public:
 		evaluate_dirty_changed();
 	}
 
-	void save() {
-		if (m_NEW) {
+	Q_INVOKABLE void save() {
+		if (m_NEW || m_DELETE_PENDING) {
 			auto tq = QStringLiteral(R"RJIENRLWEY(
 INSERT INTO Note
 (ID,title,metadata)
@@ -297,6 +316,10 @@ VALUES
 				qCritical() << query.lastError() << "when creating a new item of Note";
 			}
 			m_NEW = false;
+			if (m_DELETE_PENDING) {
+				m_DELETE_PENDING = false;
+				pendingDeleteChanged();
+			}
 		} else {
 		Change changes;
 		
@@ -335,7 +358,7 @@ VALUES
 	}
 
 	
-	QList<QSharedPointer<Note>> childNotes() {
+	Q_INVOKABLE QList<QSharedPointer<Note>> childNotes() {
 		auto tq = QStringLiteral("SELECT * FROM Note WHERE PARENT_Note_ID = :parent_id");
 		QSqlQuery query;
 		query.prepare(tq);
@@ -357,7 +380,7 @@ VALUES
 		}
 		return ret;
 	}
-	void addChildNote(QSharedPointer<Note> child) {
+	Q_INVOKABLE void addChildNote(QSharedPointer<Note> child) {
 		auto tq = QStringLiteral("UPDATE Note SET PARENT_Note_ID = :new_parent_id WHERE ID = :child_id ");
 		QSqlQuery query;
 		query.prepare(tq);
@@ -369,7 +392,7 @@ VALUES
 		}
 		child->m_parent_Note_ID = m_ID;
 	}
-	void removeChildNote(QSharedPointer<Note> child) {
+	Q_INVOKABLE void removeChildNote(QSharedPointer<Note> child) {
 		auto tq = QStringLiteral("UPDATE Note SET PARENT_Note_ID = NULL WHERE ID = :child_id ");
 		QSqlQuery query;
 		query.prepare(tq);
@@ -450,12 +473,18 @@ VALUES
 };
 
 class NoteModel : public QAbstractListModel {
+	Q_OBJECT
+
 	mutable QSqlQuery m_query;
 	static const int fetch_size = 255;
 	int m_rowCount = 0;
 	int m_bottom = 0;
 	bool m_atEnd = false;
+	QUuid m_parentID;
 	mutable QMap<int,QSharedPointer<Note>> m_items;
+	QSharedPointer<Note> m_staging;
+
+	Q_PROPERTY(Note* staging READ staging NOTIFY stagingItemChanged)
 
 	void prefetch(int toRow) {
 		if (m_atEnd || toRow <= m_bottom)
@@ -485,13 +514,32 @@ class NoteModel : public QAbstractListModel {
 
 public:
 
+	Q_SIGNAL void stagingItemChanged();
+
 	enum NoteData {
 		title = Qt::UserRole,
 		metadata ,
 		
 		childrenNote,
 		
+		object
 	};
+
+	Note* staging() const {
+		return m_staging.data();
+	}
+
+	Q_INVOKABLE void createStaging() {
+		m_staging = Note::newNote();
+		Q_EMIT stagingItemChanged();
+	}
+
+	Q_INVOKABLE void commitStaging() {
+		m_staging->save();
+		prefetch(fetch_size);
+		m_staging = nullptr;
+		Q_EMIT stagingItemChanged();
+	}
 
 	NoteModel(QObject *parent = nullptr) : QAbstractListModel(parent)
 	{
@@ -508,6 +556,7 @@ public:
 			childModel->m_query.prepare("SELECT * FROM Note WHERE PARENT_Note_ID = :parent_id");
 			childModel->m_query.bindValue(":parent_id", id);
 			childModel->m_bottom = 0;
+			childModel->m_parentID = id;
 			childModel->m_query.exec();
 			childModel->prefetch(fetch_size);
 			s_models[id] = childModel;
@@ -536,6 +585,7 @@ public:
 		
 		rn[NoteData::childrenNote] = QByteArray("children-Note");
 		
+		rn[NoteData::object] = QByteArray("Note-object");
 		return rn;
 	}
 
@@ -566,6 +616,8 @@ public:
 		case NoteData::childrenNote:
 			return QVariant::fromValue(NoteModel::withNoteParent(m_items[item.row()]->m_ID));
 		
+		case NoteData::object:
+			return QVariant::fromValue(m_items[item.row()]);
 		}
 
 		return QVariant();

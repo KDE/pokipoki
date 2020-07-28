@@ -5,6 +5,7 @@ import (
 	"log"
 	"path"
 	"regexp"
+	"strconv"
 	"strings"
 	"text/scanner"
 )
@@ -53,8 +54,18 @@ func (s *customScanner) ScanToEOL() (ret []string) {
 	return
 }
 
+func (s *customScanner) ScanNumber() int64 {
+	s.ScanNoEOF()
+	if !isNumber(s.TokenText()) {
+		log.Fatalf("%s: Was expecting a number, got '%s'", s.Position, s.TokenText())
+	}
+	ret, _ := strconv.ParseInt(s.TokenText(), 10, 64)
+	return ret
+}
+
 var isIdent = regexp.MustCompile(`^[a-z][a-zA-Z]+$`).MatchString
 var isName = regexp.MustCompile(`^[A-Z][a-zA-Z]+$`).MatchString
+var isNumber = regexp.MustCompile(`^[0-9]+$`).MatchString
 
 // ParseFile returns a parsed PokiPokiDocument from a file
 func ParseFile(file string) (PokiPokiDocument, error) {
@@ -72,8 +83,14 @@ func ParseFile(file string) (PokiPokiDocument, error) {
 	s.Filename = path.Base(file)
 
 	for tok := s.Scan(); tok != scanner.EOF; tok = s.Scan() {
-		if s.TokenText() != "object" {
-			log.Fatalf("%s: not an object definition", s.Position)
+		if s.TokenText() != "object" && s.TokenText() != "schema" {
+			log.Fatalf("%s: not an object or schema definition", s.Position)
+		}
+
+		if s.TokenText() == "schema" {
+			doku.SchemaName = s.ScanName()
+			doku.SchemaVersion = s.ScanNumber()
+			continue
 		}
 
 		obj := PokiPokiObject{}
