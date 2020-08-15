@@ -47,8 +47,6 @@ class {{ .Name }} : public QObject, PPUndoRedoable {
 	{{ .Name }}(QUuid ID) : QObject(nullptr), m_ID(ID) {
 		static bool db_initialized = false;
 		if (!db_initialized) {
-			volatile auto db = PPDatabase::instance();
-			Q_UNUSED(db)
 			prepareDatabase();
 			db_initialized = true;
 		}
@@ -393,6 +391,9 @@ VALUES
 	}
 
 	static void prepareDatabase() {
+		volatile auto db = PPDatabase::instance();
+		Q_UNUSED(db)
+
 		auto tq = QStringLiteral(R"RJIENRLWEY(
 		CREATE TABLE IF NOT EXISTS {{ $item.Name }}(
 			ID BLOB NOT NULL,
@@ -486,8 +487,6 @@ public:
 
 	{{.Name}}Model(QObject *parent = nullptr) : QAbstractListModel(parent)
 	{
-		volatile auto db = PPDatabase::instance();
-		Q_UNUSED(db)
 		m_query.prepare("SELECT * FROM {{ .Name }}");
 		m_query.exec();
 		prefetch(fetch_size);

@@ -25,15 +25,17 @@ PPDatabase::PPDatabase(QObject *parent) : QObject(parent)
 {
     d_ptr = new Private;
 
-    Q_ASSERT(QSqlDatabase::isDriverAvailable(DRIVER));
-    Q_ASSERT(QDir().mkpath(QDir::cleanPath(QStandardPaths::writableLocation(QStandardPaths::DataLocation))));
+    assert(QSqlDatabase::isDriverAvailable(DRIVER));
+    auto ok = QDir().mkpath(QDir::cleanPath(QStandardPaths::writableLocation(QStandardPaths::DataLocation)));
+    assert(ok);
 
     d_ptr->db = QSqlDatabase::addDatabase(DRIVER);
     d_ptr->db.setDatabaseName(QDir::cleanPath(QStandardPaths::writableLocation(QStandardPaths::DataLocation) + "/" + qAppName()));
 
     QDir::cleanPath(QStandardPaths::writableLocation(QStandardPaths::DataLocation) + "/" + qAppName());
 
-    Q_ASSERT(d_ptr->db.open());
+    auto result = d_ptr->db.open();
+    assert(result);
 }
 
 PPDatabase* PPDatabase::instance()
