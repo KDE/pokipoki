@@ -441,7 +441,9 @@ class {{ .Name }}Model : public QAbstractListModel {
 		} else {
 			int i =	oldBottom;
 			if (m_query.seek(i)) {
-				while (m_query.next()) i++;
+				do {
+					i++;
+				} while (m_query.next());
 				newBottom = i;
 			} else {
 				newBottom = -1;
