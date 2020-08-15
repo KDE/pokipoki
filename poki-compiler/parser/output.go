@@ -28,9 +28,18 @@ var tmpl = template.Must(template.New("").Funcs(template.FuncMap{
 
 #include "Database.h"
 
-{{- range $item := .Objects }}
+enum ModelTypes {
+	{{- range $item := .Objects }}
+	{{ .Name }}Kind,
+	{{ end -}}
+};
 
+{{- range $item := .Objects }}
+class {{ .Name }};
 class {{ .Name }}Model;
+{{ end -}}
+
+{{- range $item := .Objects }}
 
 class {{ .Name }} : public QObject, PPUndoRedoable {
 	Q_OBJECT
@@ -426,6 +435,7 @@ class {{ .Name }}Model : public QAbstractListModel {
 	QUuid m_parentID;
 	mutable QMap<int,QSharedPointer<{{.Name}}>> m_items;
 	QSharedPointer<{{ .Name }}> m_staging;
+	ModelTypes m_parentedKind;
 
 	Q_PROPERTY({{ .Name }}* staging READ staging NOTIFY stagingItemChanged)
 
@@ -451,7 +461,7 @@ class {{ .Name }}Model : public QAbstractListModel {
 			m_atEnd = true;
 		}
 		if (newBottom >= 0 && newBottom >= oldBottom) {
-			beginInsertRows(QModelIndex(), oldBottom + 1, newBottom);
+			beginInsertRows(QModelIndex(), oldBottom, newBottom - 1);
 			m_bottom = newBottom;
 			endInsertRows();
 		}
@@ -482,6 +492,24 @@ public:
 
 	Q_INVOKABLE void commitStaging() {
 		m_staging->save();
+		if (!m_parentID.isNull()) {
+			{{ range $parent := $root.ParentedBy .Name }}
+			if (m_parentedKind == ModelTypes::{{ $parent }}Kind) {
+				auto tq = QStringLiteral("UPDATE {{ $item.Name }} SET PARENT_{{ $parent }}_ID = :new_parent_id WHERE ID = :child_id ");
+				QSqlQuery query;
+				query.prepare(tq);
+				query.bindValue(":new_parent_id", m_parentID);
+				query.bindValue(":child_id", m_staging->m_ID);
+				auto ok = query.exec();
+				if (!ok) {
+					qCritical() << query.lastError() << "when adding a new {{ $item.Name }} to a parent {{ $parent }}";
+				}
+				m_staging->m_parent_{{ $parent }}_ID = m_parentID;
+			}
+			{{ end }}
+		}
+		m_query.exec();
+		m_atEnd = false;
 		prefetch(fetch_size);
 		m_staging = nullptr;
 		Q_EMIT stagingItemChanged();
@@ -499,11 +527,13 @@ public:
 		static QMap<QUuid,QPointer<{{ $item.Name }}Model>> s_models;
 		if (s_models.value(id).isNull()) {
 			auto childModel = new {{ $item.Name }}Model();
+			childModel->m_parentedKind = ModelTypes::{{ $parent }}Kind;
 			childModel->m_query.prepare("SELECT * FROM {{ $item.Name }} WHERE PARENT_{{ $parent}}_ID = :parent_id");
 			childModel->m_query.bindValue(":parent_id", id);
 			childModel->m_bottom = 0;
 			childModel->m_parentID = id;
 			childModel->m_query.exec();
+			childModel->m_atEnd = false;
 			childModel->prefetch(fetch_size);
 			s_models[id] = childModel;
 		}
@@ -562,7 +592,7 @@ public:
 			return QVariant::fromValue({{ $child }}Model::with{{ $item.Name }}Parent(m_items[item.row()]->m_ID));
 		{{ end }}
 		case {{ $item.Name }}Data::object:
-			return QVariant::fromValue(m_items[item.row()]);
+			return QVariant::fromValue(m_items[item.row()].data());
 		}
 
 		return QVariant();
