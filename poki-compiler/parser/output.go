@@ -521,7 +521,7 @@ public:
 		return m_bottom;
 	}
 
-	QHash<int, QByteArray> roleNames() const {
+	QHash<int, QByteArray> roleNames() const override {
 		auto rn = QAbstractItemModel::roleNames();
 		{{ range $index, $prop := .Properties -}}
 		rn[{{ $item.Name }}Data::{{ $prop.Name }}] = QByteArray("{{ $prop.Name }}");
@@ -565,7 +565,7 @@ public:
 		return QVariant();
 	}
 
-	Qt::ItemFlags flags(const QModelIndex &index) const {
+	Qt::ItemFlags flags(const QModelIndex &index) const override {
 		return Qt::ItemIsEditable | Qt::ItemIsSelectable | Qt::ItemIsEnabled;
 	}
 
