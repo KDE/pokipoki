@@ -486,6 +486,8 @@ public:
 
 	{{.Name}}Model(QObject *parent = nullptr) : QAbstractListModel(parent)
 	{
+		volatile auto db = PPDatabase::instance();
+		Q_UNUSED(db)
 		m_query.prepare("SELECT * FROM {{ .Name }}");
 		m_query.exec();
 		prefetch(fetch_size);
