@@ -12,5 +12,5 @@ include(GNUInstallDirs)
 find_package(Qt5 COMPONENTS Core Sql REQUIRED)
 
 add_subdirectory(poki-compiler)
-# add_subdirectory(libpokipoki)
+add_subdirectory(libpokipoki)
 # add_subdirectory(example)

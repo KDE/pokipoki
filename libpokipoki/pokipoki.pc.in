@@ -1,0 +1,9 @@
+prefix=@CMAKE_INSTALL_PREFIX@
+libdir=${prefix}/@CMAKE_INSTALL_LIBDIR@
+includedir=${prefix}/@CMAKE_INSTALL_INCLUDEDIR@
+
+Name: libpokipoki
+Description: Object persistence framework
+Version: 1.0
+Libs: -L${libdir} -lpokipoki
+Cflags: -I${includedir}
