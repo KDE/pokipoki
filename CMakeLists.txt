@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.5)
 
-project(ikona LANGUAGES CXX)
+project(pokipoki LANGUAGES CXX)
 
 set(CMAKE_INCLUDE_CURRENT_DIR ON)
 
