@@ -243,6 +243,30 @@ func (d PokiPokiDocument) AlwaysType(typeDef []string) []string {
 	return ret
 }
 
+func (d PokiPokiDocument) HasType(name string) bool {
+	for kind := range d.Objects {
+		if name == kind {
+			return true
+		}
+	}
+	return false
+}
+
+func (d PokiPokiDocument) HasRelationship(fromType, toType, name string) bool {
+	if !d.HasType(fromType) || !d.HasType(toType) {
+		return false
+	}
+	for _, item := range d.Objects[fromType].Edges {
+		if item.Direction == FromItem || item.Name != name {
+			continue
+		}
+		if item.To.Type == toType {
+			return true
+		}
+	}
+	return false
+}
+
 // Verify verifies that a PokiPokiDocument is valid
 func (d PokiPokiDocument) Verify() {
 	for _, obj := range d.Objects {
@@ -254,6 +278,18 @@ func (d PokiPokiDocument) Verify() {
 				}
 			}
 			log.Fatalf("Unknown type '%s'", child)
+		}
+		for _, relationship := range obj.Edges {
+			switch relationship.Direction {
+			case FromItem:
+				if !d.HasRelationship(relationship.From.Type, obj.Name, relationship.From.Name) {
+					log.Fatalf("Invalid relationship from type '%s' to type '%s' called '%s'", relationship.From.Type, obj.Name, relationship.From.Name)
+				}
+			case ToItem:
+				if !d.HasType(relationship.To.Type) {
+					log.Fatalf("Invalid relationship from type '%s' to type '%s' called '%s'", obj.Name, relationship.To.Type, relationship.Name)
+				}
+			}
 		}
 		for _, prop := range obj.Properties {
 			if _, ok := d.Type(prop.Type); !ok {

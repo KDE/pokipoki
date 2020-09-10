@@ -93,7 +93,9 @@ func ParseFile(file string) (PokiPokiDocument, error) {
 			continue
 		}
 
-		obj := PokiPokiObject{}
+		obj := PokiPokiObject{
+			Edges: map[string]PokiPokiRelationship{},
+		}
 		obj.Name = s.ScanName()
 
 		s.ScanExpecting("{")
@@ -110,6 +112,42 @@ func ParseFile(file string) (PokiPokiDocument, error) {
 				continue
 			} else if !isIdent(s.TokenText()) {
 				log.Fatalf("%s: '%s' is not a valid identifier", s.Position, s.TokenText())
+			}
+
+			if s.TokenText() == "relationship" {
+				relationship := PokiPokiRelationship{}
+
+				relationship.Name = s.ScanIdent()
+
+				s.ScanExpecting("(")
+
+			relationshipFor:
+				for {
+					switch s.Scan(); s.TokenText() {
+					case "unique":
+						relationship.Unique = true
+					case "edge":
+						switch s.ScanIdent() {
+						case "from":
+							relationship.Direction = FromItem
+							relationship.From.Type = s.ScanName()
+							s.ScanExpecting("relationship")
+							relationship.From.Name = s.ScanIdent()
+						case "to":
+							relationship.Direction = ToItem
+							relationship.To.Type = s.ScanName()
+						default:
+							log.Fatalf("%s: Bad edge kind '%s'. Valid edge kinds are 'from' and 'to'", s.Position, s.TokenText())
+						}
+					case ")":
+						break relationshipFor
+					default:
+						log.Fatalf("%s: Unexpected token '%s' when parsing relationship", s.Position, s.TokenText())
+					}
+				}
+
+				obj.Edges[relationship.Name] = relationship
+				continue
 			}
 
 			prop.Name = s.TokenText()

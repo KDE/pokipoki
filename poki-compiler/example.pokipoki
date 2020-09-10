@@ -3,5 +3,11 @@ schema Noter 5
 object Note {
     title String
     metadata Map[String]String
-    Note
+    relationship children (
+        edge to Note
+    )
+    relationship parent (
+        edge from Note relationship children
+        unique
+    )
 }
