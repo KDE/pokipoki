@@ -20,6 +20,7 @@ private:
 
 public:
     static PPDatabase* instance();
+    QSqlDatabase& connection();
 };
 
 class PPUndoRedoable

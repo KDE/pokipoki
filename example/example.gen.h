@@ -18,7 +18,12 @@
 
 #include "Database.h"
 
+enum ModelTypes {
+	NoteKind,
+	};
+class Note;
 class NoteModel;
+
 
 class Note : public QObject, PPUndoRedoable {
 	Q_OBJECT
@@ -39,8 +44,6 @@ class Note : public QObject, PPUndoRedoable {
 	Note(QUuid ID) : QObject(nullptr), m_ID(ID) {
 		static bool db_initialized = false;
 		if (!db_initialized) {
-			volatile auto db = PPDatabase::instance();
-			Q_UNUSED(db)
 			prepareDatabase();
 			db_initialized = true;
 		}
@@ -48,7 +51,7 @@ class Note : public QObject, PPUndoRedoable {
 
 	~Note() {
 		if (m_DELETE_PENDING) {
-			QSqlQuery query;
+			QSqlQuery query(PPDatabase::instance()->connection());
 			query.prepare(QStringLiteral("DELETE FROM Note WHERE ID = :ID"));
 			query.bindValue(":ID", QVariant::fromValue(m_ID));
 			query.exec();
@@ -305,7 +308,7 @@ INSERT INTO Note
 VALUES
 (:ID,   :title  , :metadata );
 			)RJIENRLWEY");
-			QSqlQuery query;
+			QSqlQuery query(PPDatabase::instance()->connection());
 			query.prepare(tq);
 			query.bindValue(":ID", QVariant::fromValue(m_ID));
 			query.bindValue(":title", QVariant::fromValue(m_title));
@@ -325,7 +328,7 @@ VALUES
 		
 		if (m_title_dirty) {
 			changes.previoustitleValue.copy(m_title_prev);
-			QSqlQuery query;
+			QSqlQuery query(PPDatabase::instance()->connection());
 			auto tq = QStringLiteral(R"RJIENRLWEY( UPDATE Note SET title = :val WHERE ID = :id )RJIENRLWEY");
 			query.prepare(tq);
 			query.bindValue(":val", QVariant::fromValue(m_title));
@@ -339,7 +342,7 @@ VALUES
 		
 		if (m_metadata_dirty) {
 			changes.previousmetadataValue.copy(m_metadata_prev);
-			QSqlQuery query;
+			QSqlQuery query(PPDatabase::instance()->connection());
 			auto tq = QStringLiteral(R"RJIENRLWEY( UPDATE Note SET metadata = :val WHERE ID = :id )RJIENRLWEY");
 			query.prepare(tq);
 			query.bindValue(":val", QVariant::fromValue(m_metadata));
@@ -360,7 +363,7 @@ VALUES
 	
 	Q_INVOKABLE QList<QSharedPointer<Note>> childNotes() {
 		auto tq = QStringLiteral("SELECT * FROM Note WHERE PARENT_Note_ID = :parent_id");
-		QSqlQuery query;
+		QSqlQuery query(PPDatabase::instance()->connection());
 		query.prepare(tq);
 		query.bindValue(":parent_id", m_ID);
 		auto ok = query.exec();
@@ -382,7 +385,7 @@ VALUES
 	}
 	Q_INVOKABLE void addChildNote(QSharedPointer<Note> child) {
 		auto tq = QStringLiteral("UPDATE Note SET PARENT_Note_ID = :new_parent_id WHERE ID = :child_id ");
-		QSqlQuery query;
+		QSqlQuery query(PPDatabase::instance()->connection());
 		query.prepare(tq);
 		query.bindValue(":new_parent_id", m_ID);
 		query.bindValue(":child_id", child->m_ID);
@@ -394,7 +397,7 @@ VALUES
 	}
 	Q_INVOKABLE void removeChildNote(QSharedPointer<Note> child) {
 		auto tq = QStringLiteral("UPDATE Note SET PARENT_Note_ID = NULL WHERE ID = :child_id ");
-		QSqlQuery query;
+		QSqlQuery query(PPDatabase::instance()->connection());
 		query.prepare(tq);
 		query.bindValue(":child_id", child->m_ID);
 		auto ok = query.exec();
@@ -413,7 +416,7 @@ VALUES
 
 	static QSharedPointer<Note> load(const QUuid& ID) {
 		auto tq = QStringLiteral("SELECT * FROM Note WHERE ID = :id");
-		QSqlQuery query;
+		QSqlQuery query(PPDatabase::instance()->connection());
 		query.prepare(tq);
 		query.bindValue(":id", ID);
 		auto ok = query.exec();
@@ -431,7 +434,7 @@ VALUES
 
 	static QList<QSharedPointer<Note>> where(PredicateList predicates) {
 		auto tq = QStringLiteral("SELECT * FROM Note WHERE %1").arg(predicates.allPredicatesToWhere().join(","));
-		QSqlQuery query;
+		QSqlQuery query(PPDatabase::instance()->connection());
 		query.prepare(tq);
 		predicates.bindAllPredicates(&query);
 		auto ok = query.exec();
@@ -452,6 +455,9 @@ VALUES
 	}
 
 	static void prepareDatabase() {
+		volatile auto db = PPDatabase::instance();
+		Q_UNUSED(db)
+
 		auto tq = QStringLiteral(R"RJIENRLWEY(
 		CREATE TABLE IF NOT EXISTS Note(
 			ID BLOB NOT NULL,
@@ -462,7 +468,7 @@ VALUES
 			metadata BLOB NOT NULL,
 			PRIMARY KEY (ID))
 		)RJIENRLWEY");
-		QSqlQuery query;
+		QSqlQuery query(PPDatabase::instance()->connection());
 		query.prepare(tq);
 		auto ok = query.exec();
 		if (!ok) {
@@ -475,7 +481,7 @@ VALUES
 class NoteModel : public QAbstractListModel {
 	Q_OBJECT
 
-	mutable QSqlQuery m_query;
+	mutable QSqlQuery m_query = QSqlQuery(PPDatabase::instance()->connection());
 	static const int fetch_size = 255;
 	int m_rowCount = 0;
 	int m_bottom = 0;
@@ -483,6 +489,7 @@ class NoteModel : public QAbstractListModel {
 	QUuid m_parentID;
 	mutable QMap<int,QSharedPointer<Note>> m_items;
 	QSharedPointer<Note> m_staging;
+	ModelTypes m_parentedKind;
 
 	Q_PROPERTY(Note* staging READ staging NOTIFY stagingItemChanged)
 
@@ -498,7 +505,9 @@ class NoteModel : public QAbstractListModel {
 		} else {
 			int i =	oldBottom;
 			if (m_query.seek(i)) {
-				while (m_query.next()) i++;
+				do {
+					i++;
+				} while (m_query.next());
 				newBottom = i;
 			} else {
 				newBottom = -1;
@@ -506,7 +515,7 @@ class NoteModel : public QAbstractListModel {
 			m_atEnd = true;
 		}
 		if (newBottom >= 0 && newBottom >= oldBottom) {
-			beginInsertRows(QModelIndex(), oldBottom + 1, newBottom);
+			beginInsertRows(QModelIndex(), oldBottom, newBottom - 1);
 			m_bottom = newBottom;
 			endInsertRows();
 		}
@@ -536,6 +545,24 @@ public:
 
 	Q_INVOKABLE void commitStaging() {
 		m_staging->save();
+		if (!m_parentID.isNull()) {
+			
+			if (m_parentedKind == ModelTypes::NoteKind) {
+				auto tq = QStringLiteral("UPDATE Note SET PARENT_Note_ID = :new_parent_id WHERE ID = :child_id ");
+				QSqlQuery query(PPDatabase::instance()->connection());
+				query.prepare(tq);
+				query.bindValue(":new_parent_id", m_parentID);
+				query.bindValue(":child_id", m_staging->m_ID);
+				auto ok = query.exec();
+				if (!ok) {
+					qCritical() << query.lastError() << "when adding a new Note to a parent Note";
+				}
+				m_staging->m_parent_Note_ID = m_parentID;
+			}
+			
+		}
+		m_query.exec();
+		m_atEnd = false;
 		prefetch(fetch_size);
 		m_staging = nullptr;
 		Q_EMIT stagingItemChanged();
@@ -553,11 +580,13 @@ public:
 		static QMap<QUuid,QPointer<NoteModel>> s_models;
 		if (s_models.value(id).isNull()) {
 			auto childModel = new NoteModel();
+			childModel->m_parentedKind = ModelTypes::NoteKind;
 			childModel->m_query.prepare("SELECT * FROM Note WHERE PARENT_Note_ID = :parent_id");
 			childModel->m_query.bindValue(":parent_id", id);
 			childModel->m_bottom = 0;
 			childModel->m_parentID = id;
 			childModel->m_query.exec();
+			childModel->m_atEnd = false;
 			childModel->prefetch(fetch_size);
 			s_models[id] = childModel;
 		}
@@ -578,7 +607,7 @@ public:
 		return m_bottom;
 	}
 
-	QHash<int, QByteArray> roleNames() const {
+	QHash<int, QByteArray> roleNames() const override {
 		auto rn = QAbstractItemModel::roleNames();
 		rn[NoteData::title] = QByteArray("title");
 		rn[NoteData::metadata] = QByteArray("metadata");
@@ -617,13 +646,13 @@ public:
 			return QVariant::fromValue(NoteModel::withNoteParent(m_items[item.row()]->m_ID));
 		
 		case NoteData::object:
-			return QVariant::fromValue(m_items[item.row()]);
+			return QVariant::fromValue(m_items[item.row()].data());
 		}
 
 		return QVariant();
 	}
 
-	Qt::ItemFlags flags(const QModelIndex &index) const {
+	Qt::ItemFlags flags(const QModelIndex &index) const override {
 		return Qt::ItemIsEditable | Qt::ItemIsSelectable | Qt::ItemIsEnabled;
 	}
 

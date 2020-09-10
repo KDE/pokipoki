@@ -50,6 +50,11 @@ PPDatabase* PPDatabase::instance()
     return db;
 };
 
+QSqlDatabase& PPDatabase::connection()
+{
+    return d_ptr->db;
+}
+
 class PPUndoRedoStack::Private
 {
     QList<PPUndoRedoable*> undoItems;

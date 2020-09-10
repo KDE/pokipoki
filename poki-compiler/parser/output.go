@@ -63,7 +63,7 @@ class {{ .Name }} : public QObject, PPUndoRedoable {
 
 	~{{ .Name }}() {
 		if (m_DELETE_PENDING) {
-			QSqlQuery query;
+			QSqlQuery query(PPDatabase::instance()->connection());
 			query.prepare(QStringLiteral("DELETE FROM {{ .Name }} WHERE ID = :ID"));
 			query.bindValue(":ID", QVariant::fromValue(m_ID));
 			query.exec();
@@ -271,7 +271,7 @@ INSERT INTO {{ $item.Name }}
 VALUES
 (:ID, {{ range $index, $prop := .Properties }} {{ if $index }},{{ end }} :{{- $prop.Name }} {{ end }});
 			)RJIENRLWEY");
-			QSqlQuery query;
+			QSqlQuery query(PPDatabase::instance()->connection());
 			query.prepare(tq);
 			query.bindValue(":ID", QVariant::fromValue(m_ID));
 			{{- range $prop := .Properties }}
@@ -291,7 +291,7 @@ VALUES
 		{{ range $prop := .Properties }}
 		if (m_{{$prop.Name}}_dirty) {
 			changes.previous{{$prop.Name}}Value.copy(m_{{ $prop.Name }}_prev);
-			QSqlQuery query;
+			QSqlQuery query(PPDatabase::instance()->connection());
 			auto tq = QStringLiteral(R"RJIENRLWEY( UPDATE {{ $item.Name}} SET {{$prop.Name}} = :val WHERE ID = :id )RJIENRLWEY");
 			query.prepare(tq);
 			query.bindValue(":val", QVariant::fromValue(m_{{$prop.Name}}));
@@ -312,7 +312,7 @@ VALUES
 	{{ range $child := .Children }}
 	Q_INVOKABLE QList<QSharedPointer<{{ $child }}>> child{{ $child }}s() {
 		auto tq = QStringLiteral("SELECT * FROM {{ $child }} WHERE PARENT_{{ $item.Name }}_ID = :parent_id");
-		QSqlQuery query;
+		QSqlQuery query(PPDatabase::instance()->connection());
 		query.prepare(tq);
 		query.bindValue(":parent_id", m_ID);
 		auto ok = query.exec();
@@ -332,7 +332,7 @@ VALUES
 	}
 	Q_INVOKABLE void addChild{{ $child }}(QSharedPointer<{{ $child }}> child) {
 		auto tq = QStringLiteral("UPDATE {{ $child }} SET PARENT_{{ $item.Name }}_ID = :new_parent_id WHERE ID = :child_id ");
-		QSqlQuery query;
+		QSqlQuery query(PPDatabase::instance()->connection());
 		query.prepare(tq);
 		query.bindValue(":new_parent_id", m_ID);
 		query.bindValue(":child_id", child->m_ID);
@@ -344,7 +344,7 @@ VALUES
 	}
 	Q_INVOKABLE void removeChild{{ $child }}(QSharedPointer<{{ $child }}> child) {
 		auto tq = QStringLiteral("UPDATE {{ $child }} SET PARENT_{{ $item.Name }}_ID = NULL WHERE ID = :child_id ");
-		QSqlQuery query;
+		QSqlQuery query(PPDatabase::instance()->connection());
 		query.prepare(tq);
 		query.bindValue(":child_id", child->m_ID);
 		auto ok = query.exec();
@@ -363,7 +363,7 @@ VALUES
 
 	static QSharedPointer<{{ .Name }}> load(const QUuid& ID) {
 		auto tq = QStringLiteral("SELECT * FROM {{ $item.Name }} WHERE ID = :id");
-		QSqlQuery query;
+		QSqlQuery query(PPDatabase::instance()->connection());
 		query.prepare(tq);
 		query.bindValue(":id", ID);
 		auto ok = query.exec();
@@ -381,7 +381,7 @@ VALUES
 
 	static QList<QSharedPointer<{{ .Name }}>> where(PredicateList predicates) {
 		auto tq = QStringLiteral("SELECT * FROM {{ $item.Name }} WHERE %1").arg(predicates.allPredicatesToWhere().join(","));
-		QSqlQuery query;
+		QSqlQuery query(PPDatabase::instance()->connection());
 		query.prepare(tq);
 		predicates.bindAllPredicates(&query);
 		auto ok = query.exec();
@@ -414,7 +414,7 @@ VALUES
 			{{ end -}}
 			PRIMARY KEY (ID))
 		)RJIENRLWEY");
-		QSqlQuery query;
+		QSqlQuery query(PPDatabase::instance()->connection());
 		query.prepare(tq);
 		auto ok = query.exec();
 		if (!ok) {
@@ -427,7 +427,7 @@ VALUES
 class {{ .Name }}Model : public QAbstractListModel {
 	Q_OBJECT
 
-	mutable QSqlQuery m_query;
+	mutable QSqlQuery m_query = QSqlQuery(PPDatabase::instance()->connection());
 	static const int fetch_size = 255;
 	int m_rowCount = 0;
 	int m_bottom = 0;
@@ -496,7 +496,7 @@ public:
 			{{ range $parent := $root.ParentedBy .Name }}
 			if (m_parentedKind == ModelTypes::{{ $parent }}Kind) {
 				auto tq = QStringLiteral("UPDATE {{ $item.Name }} SET PARENT_{{ $parent }}_ID = :new_parent_id WHERE ID = :child_id ");
-				QSqlQuery query;
+				QSqlQuery query(PPDatabase::instance()->connection());
 				query.prepare(tq);
 				query.bindValue(":new_parent_id", m_parentID);
 				query.bindValue(":child_id", m_staging->m_ID);
