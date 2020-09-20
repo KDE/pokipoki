@@ -9,3 +9,5 @@ exe = executable('fimbeb-example',
                  link_with: pokipoki_lib,
                  dependencies: qt5_deps,
                  include_directories: pokipoki_headers)
+
+test('test example', exe)

@@ -7,7 +7,7 @@ int main(int argc, char *argv[])
     app->setApplicationName("fimbeb-example");
 
     auto note = Note::newNote();
-    note->save();
+    Q_ASSERT(note);
 
     note->set_title("yeet one");
     note->save();
@@ -21,6 +21,7 @@ int main(int argc, char *argv[])
     for (; pUR->canUndo(); pUR->undo()) {
         qDebug() << note->title();
     }
+    Q_ASSERT(note->title() == "yeet one");
 
     return 0;
 }
